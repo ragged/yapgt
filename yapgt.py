@@ -132,7 +132,8 @@ class Model(object):
         cur = self.pg_conn.cursor()
         cur.execute(query)
         ret = cur.fetchall()
-        return ret
+        column_headers = [desc[0] for desc in cur.description]
+        return ret, column_headers
 
 class View(urwid.WidgetWrap):
     """
