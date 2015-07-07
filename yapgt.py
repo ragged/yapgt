@@ -43,10 +43,14 @@ class Model(object):
     """
     def __init__(self):
         if DEBUG: keep("Model().__init__()")
-       
+        self.begin = int(time.time())
+
         self.modes = ['seq_idx', 'ins_upd_del', 'table_idx', 'table_io']
         # Connection object
         self.pg_conn = self.pg_connect()
+
+        #The main buffer for all the fancy statistics we safe
+        self.history_buffer = {}
 
     def set_mode(self, m):
         """ Set mode """
@@ -57,11 +61,17 @@ class Model(object):
         """ Return all modes that are defined in the Model()"""
         if DEBUG: keep("Model().get_modes()")
         return self.modes
-
+    
+    def get_mode(self):
+        """ Return current active mode """
+        if DEBUG: keep("Model().get_mode()")
+        return self.current_mode
+    
     def get_data(self):
         if DEBUG: keep("Model().get_data()")
-        self.pg_get_data()
-        return str(time.time())
+        #self.buffer_data()
+        return str(self.buffer_data())
+        #return str(time.time())
 
     def pg_connect(self,
             host=args.host,
@@ -106,19 +116,81 @@ class Model(object):
         return conn
 
     def pg_get_data(self):
-        keep(self._pg_get_seq_idx())
+        ''' Just a general method to fetch the date for different queries '''
+        if DEBUG: keep("Model().pg_get_data()")
+        
+        cur = self.pg_conn.cursor()
+        cur.execute(self._pg_get_statistics_query())
+        data = cur.fetchall()
+        column_headers = [desc[0] for desc in cur.description]
+        
+        #return column_headers, data
+        return column_headers, data
 
-    def _pg_get_seq_idx(self):
-        '''
-        Return information of:
-        relid: Table ID
-        relname: Table Name
-        seq_scan: Initiated sequential scans
-        seq_tup_read: Recieved tuples by seq_scan
-        idx_scan: Initiated index scans
-        idx_tup_fetch: Recieved tuples by idx_scan (TODO check idx_tup_read)
-        '''
-        query = """
+    def buffer_data(self):
+        ''' The data has to be saved '''
+        column_headers, data = self.pg_get_data()
+        #The current timestamp, we need it to differentiate between oldest and newest data
+        timestamp = time.time() 
+
+        row_buffer = {} # actually all rows get saved here
+        sum_row_buffer = {}
+        col_buffer = {} # we need a temporary dict to save current rowelements
+        sum_col_buffer = {}
+        time_buffer = {}
+        sum_time_buffer = {}
+
+        for row in data:
+            col_buffer.clear() #clear the buffer
+            for col in column_headers:
+                # create a dictionary based on our column_headers
+                # this way we don't need to add new buffer rules
+                col_buffer[col] = row[column_headers.index(col)] or 0
+        
+            # use copy to copy a dict, really do it...
+            row_buffer[row[0]] = col_buffer.copy()
+        
+        time_buffer[timestamp] = row_buffer.copy()
+        if self.current_mode not in self.history_buffer.keys():
+            self.history_buffer[self.current_mode] = time_buffer.copy()
+        else:
+            self.history_buffer[self.current_mode].update(time_buffer.copy())
+        
+        #sum_time_buffer[timestamp] = sum_col_buffer.copy()
+        #if self.current_mode not in self.sum_history_buffer.keys():
+        #    self.sum_history_buffer[self.current_mode] = time_buffer.copy()
+        #else:
+        #    self.sum_history_buffer[self.current_mode].update(time_buffer.copy())
+        
+        # Clean the mess up, if more than 2 keys are in the dict,
+        # this means we have first and last and one between.
+        # Delete the one between, otherwise we hit memorylimit
+        # after several hours
+        if len(self.history_buffer[self.current_mode]) > 2:
+            first = min(self.history_buffer[self.current_mode].keys())
+            last = max(self.history_buffer[self.current_mode].keys())
+        
+            for i in self.history_buffer[self.current_mode].keys():
+                if i not in (first, last) and i < last:
+                    ##print "-10"
+                    del self.history_buffer[self.current_mode][i]
+            #time.sleep(1)
+        #Save the timestamp for next run
+        #self.previous_timestamp = timestamp
+        #print self.get_average(60, timestamp)
+        
+        
+        for i in self.history_buffer['seq_idx']:
+            keep(i)
+        keep(self.history_buffer['seq_idx'])
+    
+    def _pg_get_statistics_query(self):
+        '''All statistics queries are safed here, 
+        the current mode selects the query returned'''
+        if DEBUG: keep("Model()._pg_get_statistics_query")
+        
+        if self.current_mode == 'seq_idx':
+            return """
         SELECT
             relid,
             seq_scan,
@@ -129,11 +201,6 @@ class Model(object):
         FROM
             pg_stat_all_tables
             """
-        cur = self.pg_conn.cursor()
-        cur.execute(query)
-        ret = cur.fetchall()
-        column_headers = [desc[0] for desc in cur.description]
-        return ret, column_headers
 
 class View(urwid.WidgetWrap):
     """
@@ -149,14 +216,26 @@ class View(urwid.WidgetWrap):
     def __init__(self, controller):
         if DEBUG: keep("View().__init__({})".format(controller))
         self.controller = controller
-        self.text = urwid.Text('a', 'left', 'clip')
+        
+        self.mode = self.controller.get_mode()
+        self.frame = None
+        self.redraw_window = False
+        
         # As we need a initial starting point
         urwid.WidgetWrap.__init__(self, self.main_window())
 
-    def update(self):
+    def set_redraw_window(self, state):
+        """ If True it redraws everything, beware of losing all you focus' """
+        if DEBUG: keep("View().set_redraw_window(%s)" % state)
+        self.redraw_window = state
+
+
+    def update(self, window_refresh=False):
         """ Add new data to the views if an update occured """
         if DEBUG: keep("View().update()")
-        self.text.set_text(self.controller.get_data())
+        #self.text.set_text(self.controller.get_data())
+        
+        self.window_refresh = window_refresh
         self._w = self.main_window()
 
     def on_button_click(self, button):
@@ -184,8 +263,6 @@ class View(urwid.WidgetWrap):
                 urwid.SimpleListWalker(
                     [
                     urwid.AttrMap(
-                        self.text, 'body'),
-                    urwid.AttrMap(
                         urwid.Text("Row 2", 'left', 'clip'), 'body'),
                 ])
             )
@@ -204,7 +281,7 @@ class View(urwid.WidgetWrap):
 
     def basic_frame(self):
         if DEBUG: keep("View().frame()")
-        keep(self.text.get_text())
+        #keep(self.text.get_text())
         
         f = urwid.Frame(
                 urwid.AttrMap(
@@ -232,19 +309,30 @@ class Controller(object):
 
         self.update_alarm = None
         self.model = Model() # Initialise the Model
-        self.view = View(self) # Initiate the View, add controller object
 
         # use the first mode as the default
         mode = self.get_modes()[0]
         self.model.set_mode(mode)
 
+        self.view = View(self) # Initiate the View, add controller object
 
-        self.view.update()
+        self.set_redraw_window(True)
+        #self.view.update()
+    
+    def set_redraw_window(self, state):
+        """ If true it will redraw _everything_ you will lose focus"""
+        if DEBUG: keep("Controller().set_redraw_screen(%s)" % state)
+        self.view.set_redraw_window(state)
 
     def get_modes(self):
         """ Pipe list of modes from Model() to View() """
         if DEBUG: keep("Controller().get_modes()")
         return self.model.get_modes()
+
+    def get_mode(self):
+        """ Pipe current active mode from Model() to View() """
+        if DEBUG: keep("Controller().get_modes()")
+        return self.model.get_mode()
 
     def set_mode(self, m):
         """ Pipe mode from View() to Model() """
