@@ -60,6 +60,7 @@ class Model(object):
 
     def get_data(self):
         if DEBUG: keep("Model().get_data()")
+        self.pg_get_data()
         return str(time.time())
 
     def pg_connect(self,
@@ -105,7 +106,33 @@ class Model(object):
         return conn
 
     def pg_get_data(self):
-        pass
+        keep(self._pg_get_seq_idx())
+
+    def _pg_get_seq_idx(self):
+        '''
+        Return information of:
+        relid: Table ID
+        relname: Table Name
+        seq_scan: Initiated sequential scans
+        seq_tup_read: Recieved tuples by seq_scan
+        idx_scan: Initiated index scans
+        idx_tup_fetch: Recieved tuples by idx_scan (TODO check idx_tup_read)
+        '''
+        query = """
+        SELECT
+            relid,
+            seq_scan,
+            seq_tup_read,
+            idx_scan,
+            idx_tup_fetch,
+            relname
+        FROM
+            pg_stat_all_tables
+            """
+        cur = self.pg_conn.cursor()
+        cur.execute(query)
+        ret = cur.fetchall()
+        return ret
 
 class View(urwid.WidgetWrap):
     """
