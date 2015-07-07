@@ -24,6 +24,18 @@ args = parser.parse_args()
 UPDATE_INTERVAL = 1
 DEBUG = True
 
+
+
+class SelectableText(urwid.Text):
+    def __init__(self, txt='', align='left', wrap='space', layout=None):
+        super(SelectableText, self).__init__(txt, align, wrap, layout) 
+
+    def selectable(self):
+        return True
+    
+    def keypress(self, size, key):
+        return key
+
 class Model(object):
     """
     Calculations happen in here, also the gathering of the data.
@@ -223,7 +235,7 @@ class Controller(object):
     def main(self):
         """ Start the MainLoop """
         if DEBUG: keep("Controller().main()")
-        self.loop = urwid.MainLoop(self.view, self.view.palette)
+        self.loop = urwid.MainLoop(self.view, self.view.palette, unhandled_input=self.keypress)
         self.update()
         self.loop.run()
 
@@ -233,6 +245,19 @@ class Controller(object):
         self.view.update()
         self.update_alarm = self.loop.set_alarm_in(UPDATE_INTERVAL, 
                 self.update)
+    
+    def keypress(self, key):
+        if DEBUG: keep("Controller().keypress()")
+        if key == 'up':
+            keep("UP")
+        if key == 'down':
+            keep("DOWN")
+        if key == 'right':
+            keep("RIGHT")
+        if key == 'enter':
+            keep("ENTER ENTER")
+            #TODO Don't do direct call
+            self.view.get_current_focus()
 
 def keep(a):
     ''' A little debug function '''
