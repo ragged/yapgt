@@ -44,6 +44,8 @@ class Model(object):
     def __init__(self):
         if DEBUG: keep("Model().__init__()")
         self.begin = int(time.time())
+        self.query = ""
+        self.meta = []
 
         self.modes = ['seq_idx', 'ins_upd_del', 'table_idx', 'table_io']
         # Connection object
@@ -56,6 +58,7 @@ class Model(object):
         """ Set mode """
         if DEBUG: keep("Model().set_mode()")
         self.current_mode = m
+        self._set_meta()
 
     def get_modes(self):
         """ Return all modes that are defined in the Model()"""
@@ -67,9 +70,20 @@ class Model(object):
         if DEBUG: keep("Model().get_mode()")
         return self.current_mode
     
+    def _set_meta(self):
+        if DEBUG: keep("Model().switch_meta()")
+        if self.current_mode == 'seq_idx':
+            self.seq_idx()
+
+    def get_meta(self):
+        if DEBUG: keep("Model().get_meta()")
+
+
+
     def get_data(self):
         if DEBUG: keep("Model().get_data()")
         #self.buffer_data()
+        keep(self.buffer_data())
         return str(self.buffer_data())
         #return str(time.time())
 
@@ -120,12 +134,13 @@ class Model(object):
         if DEBUG: keep("Model().pg_get_data()")
         
         cur = self.pg_conn.cursor()
-        cur.execute(self._pg_get_statistics_query())
+        cur.execute(self.query)
         data = cur.fetchall()
         column_headers = [desc[0] for desc in cur.description]
         
         #return column_headers, data
         return column_headers, data
+
 
     def buffer_data(self):
         ''' The data has to be saved '''
@@ -183,8 +198,8 @@ class Model(object):
         for i in self.history_buffer['seq_idx']:
             keep(i)
         keep(self.history_buffer['seq_idx'])
-    
-    def _pg_get_statistics_query(self):
+ 
+    def _pg_get_query(self):
         '''All statistics queries are safed here, 
         the current mode selects the query returned'''
         if DEBUG: keep("Model()._pg_get_statistics_query")
@@ -201,6 +216,87 @@ class Model(object):
         FROM
             pg_stat_all_tables
             """
+    
+    def seq_idx(self):
+        self.query = """
+        SELECT
+            relid,
+            seq_scan,
+            seq_tup_read,
+            idx_scan,
+            idx_tup_fetch,
+            relname
+        FROM
+            pg_stat_all_tables
+            """
+
+        self.meta = [
+                {'name'     :'relid',
+                'template'  : '%5s ',
+                'width'     : 7,
+                'mandatory' : True,
+                'def_view'  : False,
+                'type'      : 'static',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'seq_scan',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : False,
+                'def_view'  : False,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'seq_tup_read',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : False,
+                'def_view'  : True,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'idx_scan',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : True,
+                'def_view'  : False,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'idx_tup_fetch',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : True,
+                'def_view'  : False,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'relname',
+                'template'  : '%32s ',
+                'width'     : 'pack',
+                'mandatory' : False,
+                'def_view'  : False,
+                'type'      : 'static',
+                'align'     : 'left',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },]
+
 
 class View(urwid.WidgetWrap):
     """
@@ -233,11 +329,11 @@ class View(urwid.WidgetWrap):
     def update(self, window_refresh=False):
         """ Add new data to the views if an update occured """
         if DEBUG: keep("View().update()")
-        #self.text.set_text(self.controller.get_data())
+        keep(self.controller.get_data())
         
         self.window_refresh = window_refresh
         self._w = self.main_window()
-
+    
     def on_button_click(self, button):
         if DEBUG: keep("View().on_button_click()")
         pass
@@ -251,6 +347,17 @@ class View(urwid.WidgetWrap):
         w = urwid.Button(t, fn)
         w = urwid.AttrMap(w, 'button_normal', 'button_select')
         return w
+    
+    def row(self, data, meta):
+        if DEBUG: keep("View().row({})".format(data))
+
+        columns = []
+
+          
+
+        new_row.append(SelectableText(str(current_string)+" ", current_align, current_wrap))
+        return urwid.AttrMap(urwid.Columns(new_row), self.origin, 'focus')
+
 
     def basic_header(self):
         if DEBUG: keep("View().basic_header()")
