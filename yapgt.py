@@ -98,7 +98,8 @@ class Model(object):
         if DEBUG: keep("Model().get_data()")
         #self.buffer_data()
         keep(self.buffer_data())
-        return str(self.buffer_data())
+        return str(self._get_delta())
+        #return str(self.buffer_data())
         #return str(time.time())
 
     def pg_connect(self,
@@ -214,7 +215,63 @@ class Model(object):
         for i in self.history_buffer['seq_idx']:
             keep("history_buffer: " + str(i))
         keep(self.history_buffer)
- 
+    
+    def _get_first(self):
+        ''' Return the first dataset '''
+        if DEBUG: keep('Model()._get_first()')
+
+        first_timestamp = min(self.history_buffer[self.current_mode].keys())
+
+        return first_timestamp, self.history_buffer[self.current_mode][first_timestamp]
+
+    def _get_last(self):
+        ''' Return the last dataset '''
+        if DEBUG: keep('Model()._get_last()')
+
+        last_timestamp = max(self.history_buffer[self.current_mode].keys())
+
+        return last_timestamp, self.history_buffer[self.current_mode][last_timestamp]
+
+    def _get_top_cols(self):
+        ''' Create list for header '''
+        if DEBUG: keep('Model()._get_top_cols()')
+
+        top_cols = {}
+        for i in self.meta:
+            pass
+
+    def _get_delta(self):
+        ''' Calculate the increase between given datasets '''
+        if DEBUG: keep("Model()._get_delta()")
+        new_dict = {}
+        
+        first_timestamp, first_dataset = self._get_first()
+        last_timestamp, last_dataset = self._get_last()
+
+        row_buffer = {} # All rows go in here
+        col_buffer = {} # we need a temporary dict to save current rowelements
+
+        for row in last_dataset:
+            for col in last_dataset[row]:
+                if self.meta[col]['type'] == 'static': # We don't need to substract
+                    # create a dictionary based on our TOP_COLS
+                    # this way we don't need to add new buffer rules
+                    col_buffer[self.meta[col]['name']] = last_dataset[row][col]
+                elif self.meta[col]['type'] == 'counter': # We have to get the delta
+                    # create a dictionary based on our TOP_COLS
+                    # this way we don't need to add new buffer rules
+                    col_buffer[self.meta[col]['name']] = last_dataset[row][col] - first_dataset[row][col]
+            # use copy to copy a dict, really do it...
+            row_buffer[row] = col_buffer.copy()
+            if self.current_mode in ('active_queries'):
+                row_buffer[row] = self.get_prepared_data(col_buffer.copy())
+            else:
+                row_buffer[row] = col_buffer.copy()
+        #TODO Actually i don't need the calculation, have to check what i to i sort method
+        new_dict[last_timestamp - first_timestamp] = row_buffer
+
+        return new_dict
+
     def _get_seq_idx(self):
         if DEBUG: keep("Model()._get_seq_idx()")
         
@@ -232,72 +289,73 @@ class Model(object):
             pg_stat_all_tables
             """
 
-        self.meta = [
-                {'name'     :'relid',
-                'template'  : '%5s ',
-                'width'     : 7,
-                'mandatory' : True,
-                'def_view'  : False,
-                'type'      : 'static',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+        self.meta = {
+                'relid':{
+                    'name'      :'relid',
+                    'template'  : '%5s ',
+                    'width'     : 7,
+                    'mandatory' : True,
+                    'def_view'  : False,
+                    'type'      : 'static',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'seq_scan',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : False,
-                'def_view'  : False,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'seq_scan':{
+                    'name'      : 'seq_scan',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : False,
+                    'def_view'  : False,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'seq_tup_read',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : False,
-                'def_view'  : True,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'seq_tup_read':{
+                    'name'      : 'seq_tup_read',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : False,
+                    'def_view'  : True,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'idx_scan',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : True,
-                'def_view'  : False,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'idx_scan':{
+                    'name'      : 'idx_scan',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : True,
+                    'def_view'  : False,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'idx_tup_fetch',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : True,
-                'def_view'  : False,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'idx_tup_fetch':{
+                    'name'      : 'idx_tup_fetch',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : True,
+                    'def_view'  : False,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'relname',
-                'template'  : '%32s ',
-                'width'     : 'pack',
-                'mandatory' : False,
-                'def_view'  : False,
-                'type'      : 'static',
-                'align'     : 'left',
-                'visible'   : True,
-                'wrap'      : 'clip',
-                },]
+                'relname':{
+                    'name'      : 'relname',
+                    'template'  : '%32s ',
+                    'width'     : 'pack',
+                    'mandatory' : False,
+                    'def_view'  : False,
+                    'type'      : 'static',
+                    'align'     : 'left',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
+                },}
 
     def _get_ins_upd_del(self):
         if DEBUG: keep("Model()._get_ins_upd_del()")
@@ -315,62 +373,62 @@ class Model(object):
                 pg_stat_all_tables
             """
         
-        self.meta = [
-                {
-                'name'      : 'relid',
-                'template'  : '%5s ',
-                'width'     : 7,
-                'mandatory' : True,
-                'def_view'  : False,
-                'type'      : 'static',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+        self.meta = {
+                'relid':{
+                    'name'      : 'relid',
+                    'template'  : '%5s ',
+                    'width'     : 7,
+                    'mandatory' : True,
+                    'def_view'  : False,
+                    'type'      : 'static',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'n_tup_ins',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : False,
-                'def_view'  : True,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'n_tup_ins':{
+                    'name'      : 'n_tup_ins',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : False,
+                    'def_view'  : True,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'n_tup_upd',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : False,
-                'def_view'  : False,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'n_tup_upd':{
+                    'name'      : 'n_tup_upd',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : False,
+                    'def_view'  : False,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'n_tup_del',
-                'template'  : '%17s ',
-                'width'     : 17,
-                'mandatory' : True,
-                'def_view'  : False,
-                'type'      : 'counter',
-                'align'     : 'right',
-                'visible'   : True,
-                'wrap'      : 'clip',
+                'n_tup_del':{
+                    'name'      : 'n_tup_del',
+                    'template'  : '%17s ',
+                    'width'     : 17,
+                    'mandatory' : True,
+                    'def_view'  : False,
+                    'type'      : 'counter',
+                    'align'     : 'right',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
                 },
-                {
-                'name'      : 'relname',
-                'template'  : '%32s ',
-                'width'     : 'pack',
-                'mandatory' : False,
-                'def_view'  : False,
-                'type'      : 'static',
-                'align'     : 'left',
-                'visible'   : True,
-                'wrap'      : 'clip',
-                },]
+                'relname':{
+                    'name'      : 'relname',
+                    'template'  : '%32s ',
+                    'width'     : 'pack',
+                    'mandatory' : False,
+                    'def_view'  : False,
+                    'type'      : 'static',
+                    'align'     : 'left',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
+                },}
         
 
 
