@@ -44,15 +44,27 @@ class Model(object):
     def __init__(self):
         if DEBUG: keep("Model().__init__()")
         self.begin = int(time.time())
-        self.query = ""
-        self.meta = []
+        self.query = "" # current query
+        self.meta = [] # current meta data
+        self.view = "" # current view name
 
-        self.modes = ['seq_idx', 'ins_upd_del', 'table_idx', 'table_io']
+        #self.modes = ['seq_idx', 'ins_upd_del', 'table_idx', 'table_io']
+        self.modes = ['seq_idx', 'ins_upd_del']
         # Connection object
         self.pg_conn = self.pg_connect()
 
         #The main buffer for all the fancy statistics we safe
         self.history_buffer = {}
+        self.update_all() # We want to update all data right in the beginning
+
+    def update_all(self):
+        """ Just get all data we have in all modes.
+            This way we can update all views at once, 
+            e.g. in overlay modes..."""
+        if DEBUG: keep("Model().get_all()")
+        for i in self.modes:
+            self.set_mode(i)
+            self.get_data()
 
     def set_mode(self, m):
         """ Set mode """
@@ -73,7 +85,9 @@ class Model(object):
     def _set_meta(self):
         if DEBUG: keep("Model().switch_meta()")
         if self.current_mode == 'seq_idx':
-            self.seq_idx()
+            self._get_seq_idx()
+        elif self.current_mode == 'ins_upd_del':
+            self._get_ins_upd_del()
 
     def get_meta(self):
         if DEBUG: keep("Model().get_meta()")
@@ -144,6 +158,8 @@ class Model(object):
 
     def buffer_data(self):
         ''' The data has to be saved '''
+        if DEBUG: keep("Model().buffer_data()")
+
         column_headers, data = self.pg_get_data()
         #The current timestamp, we need it to differentiate between oldest and newest data
         timestamp = time.time() 
@@ -196,28 +212,14 @@ class Model(object):
         
         
         for i in self.history_buffer['seq_idx']:
-            keep(i)
-        keep(self.history_buffer['seq_idx'])
+            keep("history_buffer: " + str(i))
+        keep(self.history_buffer)
  
-    def _pg_get_query(self):
-        '''All statistics queries are safed here, 
-        the current mode selects the query returned'''
-        if DEBUG: keep("Model()._pg_get_statistics_query")
+    def _get_seq_idx(self):
+        if DEBUG: keep("Model()._get_seq_idx()")
         
-        if self.current_mode == 'seq_idx':
-            return """
-        SELECT
-            relid,
-            seq_scan,
-            seq_tup_read,
-            idx_scan,
-            idx_tup_fetch,
-            relname
-        FROM
-            pg_stat_all_tables
-            """
-    
-    def seq_idx(self):
+        self.name = "seq_idx"
+
         self.query = """
         SELECT
             relid,
@@ -297,6 +299,81 @@ class Model(object):
                 'wrap'      : 'clip',
                 },]
 
+    def _get_ins_upd_del(self):
+        if DEBUG: keep("Model()._get_ins_upd_del()")
+
+        self.name = "ins_upd_del"
+
+        self.query = """
+            SELECT
+                relid,
+                n_tup_ins,
+                n_tup_upd,
+                n_tup_del,
+                relname
+            FROM
+                pg_stat_all_tables
+            """
+        
+        self.meta = [
+                {
+                'name'      : 'relid',
+                'template'  : '%5s ',
+                'width'     : 7,
+                'mandatory' : True,
+                'def_view'  : False,
+                'type'      : 'static',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'n_tup_ins',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : False,
+                'def_view'  : True,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'n_tup_upd',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : False,
+                'def_view'  : False,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'n_tup_del',
+                'template'  : '%17s ',
+                'width'     : 17,
+                'mandatory' : True,
+                'def_view'  : False,
+                'type'      : 'counter',
+                'align'     : 'right',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },
+                {
+                'name'      : 'relname',
+                'template'  : '%32s ',
+                'width'     : 'pack',
+                'mandatory' : False,
+                'def_view'  : False,
+                'type'      : 'static',
+                'align'     : 'left',
+                'visible'   : True,
+                'wrap'      : 'clip',
+                },]
+        
+
+
 
 class View(urwid.WidgetWrap):
     """
@@ -321,10 +398,9 @@ class View(urwid.WidgetWrap):
         urwid.WidgetWrap.__init__(self, self.main_window())
 
     def set_redraw_window(self, state):
-        """ If True it redraws everything, beware of losing all you focus' """
+        """ If True it redraws everything, beware of losing all your focus """
         if DEBUG: keep("View().set_redraw_window(%s)" % state)
         self.redraw_window = state
-
 
     def update(self, window_refresh=False):
         """ Add new data to the views if an update occured """
