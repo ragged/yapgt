@@ -5,6 +5,8 @@ import time
 import urwid
 import psycopg2
 import argparse
+import utils.connect
+
 
 #Some Options
 parser = argparse.ArgumentParser(
@@ -51,7 +53,13 @@ class Model(object):
         #self.modes = ['seq_idx', 'ins_upd_del', 'table_idx', 'table_io']
         self.modes = ['seq_idx', 'ins_upd_del']
         # Connection object
-        self.pg_conn = self.pg_connect()
+        #self.pg_conn = self.pg_connect()
+        self.pg_conn = utils.connect.pg_connect(
+                host=args.host,
+                port=args.port,
+                user=args.user,
+                password=args.password,
+                database=args.database)
 
         #The main buffer for all the fancy statistics we safe
         self.history_buffer = {}
@@ -91,79 +99,23 @@ class Model(object):
 
     def get_meta(self):
         if DEBUG: keep("Model().get_meta()")
-
-
-
+        return self.meta 
+    
     def get_data(self):
         if DEBUG: keep("Model().get_data()")
         #self.buffer_data()
         keep(self.buffer_data())
-        return str(self._get_delta())
+        return self._get_delta()
         #return str(self.buffer_data())
         #return str(time.time())
-
-    def pg_connect(self,
-            host=args.host,
-            port=args.port,
-            user=args.user,
-            password=args.password,
-            database=args.database):
-        """
-        Small connection class
-        If no password is suplied we try the default postgres user
-        and expect a setted pg_ident or something similar
-        """
-        if DEBUG: keep("Model().pg_connect()")
-        try:
-            if password:
-                conn = psycopg2.connect(
-                    database=database,
-                    user=user,
-                    port=port,
-                    password=str(password),
-                    host=host
-                    #connection_factory = psycopg2.extras.DictConnection
-                    )
-            else:
-                conn = psycopg2.connect(
-                    database=database,
-                    user=user,
-                    port=port,
-                    password="",
-                    host=None
-                    #connection_factory = psycopg2.extras.DictConnection
-                    )
-
-        except psycopg2.Error, psy_err:
-            print "The connection is not possible!"
-            print psy_err
-            print psycopg2.Error
-            if host is None:
-                raise psy_err
-
-        conn.set_isolation_level(0)
-        return conn
-
-    def pg_get_data(self):
-        ''' Just a general method to fetch the date for different queries '''
-        if DEBUG: keep("Model().pg_get_data()")
-        
-        cur = self.pg_conn.cursor()
-        cur.execute(self.query)
-        data = cur.fetchall()
-        column_headers = [desc[0] for desc in cur.description]
-        
-        #return column_headers, data
-        return column_headers, data
-
 
     def buffer_data(self):
         ''' The data has to be saved '''
         if DEBUG: keep("Model().buffer_data()")
 
-        column_headers, data = self.pg_get_data()
+        column_headers, data = utils.connect.pg_get_data(self.pg_conn, self.query)
         #The current timestamp, we need it to differentiate between oldest and newest data
-        timestamp = time.time() 
+        timestamp = int(time.time() )
 
         row_buffer = {} # actually all rows get saved here
         sum_row_buffer = {}
@@ -201,7 +153,8 @@ class Model(object):
         if len(self.history_buffer[self.current_mode]) > 2:
             first = min(self.history_buffer[self.current_mode].keys())
             last = max(self.history_buffer[self.current_mode].keys())
-        
+            keep("first: "+str(first))
+            keep("last: "+str(last))
             for i in self.history_buffer[self.current_mode].keys():
                 if i not in (first, last) and i < last:
                     ##print "-10"
@@ -291,6 +244,7 @@ class Model(object):
 
         self.meta = {
                 'relid':{
+                    'id'        : 0,
                     'name'      :'relid',
                     'template'  : '%5s ',
                     'width'     : 7,
@@ -302,6 +256,7 @@ class Model(object):
                     'wrap'      : 'clip',
                 },
                 'seq_scan':{
+                    'id'        : 1,
                     'name'      : 'seq_scan',
                     'template'  : '%17s ',
                     'width'     : 17,
@@ -313,6 +268,7 @@ class Model(object):
                     'wrap'      : 'clip',
                 },
                 'seq_tup_read':{
+                    'id'        : 2,
                     'name'      : 'seq_tup_read',
                     'template'  : '%17s ',
                     'width'     : 17,
@@ -324,6 +280,7 @@ class Model(object):
                     'wrap'      : 'clip',
                 },
                 'idx_scan':{
+                    'id'        : 3,
                     'name'      : 'idx_scan',
                     'template'  : '%17s ',
                     'width'     : 17,
@@ -335,6 +292,7 @@ class Model(object):
                     'wrap'      : 'clip',
                 },
                 'idx_tup_fetch':{
+                    'id'        : 4,
                     'name'      : 'idx_tup_fetch',
                     'template'  : '%17s ',
                     'width'     : 17,
@@ -346,6 +304,7 @@ class Model(object):
                     'wrap'      : 'clip',
                 },
                 'relname':{
+                    'id'        : 5,
                     'name'      : 'relname',
                     'template'  : '%32s ',
                     'width'     : 'pack',
@@ -465,6 +424,8 @@ class View(urwid.WidgetWrap):
         if DEBUG: keep("View().update()")
         keep(self.controller.get_data())
         
+
+
         self.window_refresh = window_refresh
         self._w = self.main_window()
     
@@ -482,15 +443,64 @@ class View(urwid.WidgetWrap):
         w = urwid.AttrMap(w, 'button_normal', 'button_select')
         return w
     
-    def row(self, data, meta):
-        if DEBUG: keep("View().row({})".format(data))
+    def _get_order(self, meta):
+        if DEBUG: keep("View().get_order()")
+        """ This is to produce the right order of columns"""
+    
+        order_list = []
+
+        while len(order_list) < len(meta): # TODO Move to update()?
+            for sub_meta in meta:
+                if meta[sub_meta]['id'] == len(order_list):
+                    order_list.append(meta[sub_meta]['name'])
+                    keep(order_list)
+        return order_list
+
+    def row(self):
+        if DEBUG: keep("View().row({})")
+        """        
+                  'relname':{
+                    'name'      : 'relname',
+                    'template'  : '%32s ',
+                    'width'     : 'pack',
+                    'mandatory' : False,
+                    'def_view'  : False,
+                    'type'      : 'static',
+                    'align'     : 'left',
+                    'visible'   : True,
+                    'wrap'      : 'clip',
+                },P
+        """
+        #TODO Move to update() ?
+        meta = self.controller.get_meta()
+        data = self.controller.get_data()
+       
+        column_order = self._get_order(meta)
 
         columns = []
-
+        row = []
+        rows = []
           
-
-        new_row.append(SelectableText(str(current_string)+" ", current_align, current_wrap))
-        return urwid.AttrMap(urwid.Columns(new_row), self.origin, 'focus')
+        # Here it can be a little bit tricky
+        # Currently we have the data and meta, to add correct information
+        # for each column we need the meta data, those will match for 
+        # every row in the current view. 
+        # We iterate through the data, first key "i" will be the "version"
+        # of the row, equivalent to the time spent so far in seconds.
+        # "y" are all data rows of the current view.
+        # with "i"+"y" and the position from meta we generate the columns in 
+        # the order we defined in the meta definitions. this will be put into
+        # a list and generates one row. after each iteration we put the stuff
+        # to the rows list, which has all rows included.
+        for i in data:
+            for y in data[i]:
+                row = []
+                for position in column_order:
+                    content = data[i][y][position]
+                    
+                    row.append((meta[position]['width'], SelectableText(str(content)+" ", meta[position]['align'], meta[position]['wrap'])))
+                rows.append(urwid.AttrMap(urwid.Columns(row), 'body', 'focus'))
+        return rows
 
 
     def basic_header(self):
@@ -500,12 +510,11 @@ class View(urwid.WidgetWrap):
     def basic_body(self):
         """ Simply return the body content """
         if DEBUG: keep("View().basic_body()")
+        self.row()
         l = urwid.ListBox(
                 urwid.SimpleListWalker(
-                    [
-                    urwid.AttrMap(
-                        urwid.Text("Row 2", 'left', 'clip'), 'body'),
-                ])
+                    self.row()
+                        )
             )
 
         return l
@@ -527,10 +536,10 @@ class View(urwid.WidgetWrap):
         f = urwid.Frame(
                 urwid.AttrMap(
                     self.basic_body(), 'body'),
-                footer = urwid.AttrMap(
-                    self.basic_footer(), 'body'),
+                #footer = urwid.AttrMap(
+                #    self.basic_footer(), 'body'),
             )
-        keep(self.basic_footer())
+        #keep(self.basic_footer())
         #self.controller.update()
         return f
     
@@ -588,6 +597,14 @@ class Controller(object):
         """
         if DEBUG: keep("Controller().get_data()")
         return self.model.get_data()
+    
+    def get_meta(self):
+        """ 
+        We also need the meta data, so that the View is capable
+        of aranging every column correctly
+        """
+        if DEBUG: keep("Controller().get_meta()")
+        return self.model.get_meta()
 
     def main(self):
         """ Start the MainLoop """
